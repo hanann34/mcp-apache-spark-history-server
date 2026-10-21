@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spark demo</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1c1915;
+      --muted: #5e584f;
+      --line: #ddd6c8;
+      --paper: #f6f3ec;
+      --card: #fffcf7;
+      --green: #1f4d3a;
+      --green-soft: #e5f0ea;
+      --warn: #8a4b12;
+      --warn-soft: #f8ecdf;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 18px/1.45 "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 36px 28px 64px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 40px;
+      line-height: 1.1;
+      font-weight: 650;
+      letter-spacing: -0.03em;
+    }
+    .lead {
+      margin: 0;
+      max-width: 720px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+    .status {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 28px 0 32px;
+    }
+    .status span {
+      border: 1px solid var(--line);
+      background: var(--card);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 15px;
+    }
+    .status span.ok { background: var(--green-soft); border-color: transparent; color: var(--green); }
+    .status span.bad { background: var(--warn-soft); border-color: transparent; color: var(--warn); }
+    .layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 28px;
+      align-items: start;
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 15px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 650;
+    }
+    button, textarea {
+      font: inherit;
+    }
+    .presets { display: grid; gap: 10px; }
+    .presets button, .ask button {
+      text-align: left;
+      background: var(--card);
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+      cursor: pointer;
+    }
+    .presets button:hover, .ask button:hover { border-color: var(--ink); }
+    .ask { margin-top: 18px; display: grid; gap: 10px; }
+    textarea {
+      width: 100%;
+      min-height: 88px;
+      resize: vertical;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--ink);
+    }
+    .ask button {
+      background: var(--ink);
+      color: var(--paper);
+      border-color: var(--ink);
+    }
+    button:disabled { opacity: 0.55; cursor: wait; }
+    .empty {
+      color: var(--muted);
+      margin: 0;
+    }
+    .question {
+      margin: 0 0 18px;
+      font-size: 28px;
+      line-height: 1.25;
+      letter-spacing: -0.02em;
+    }
+    .note {
+      margin: 0 0 14px;
+      color: var(--muted);
+    }
+    article {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px 18px;
+      margin: 0 0 12px;
+    }
+    .tool-name {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 16px;
+    }
+    .args {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+    pre {
+      margin: 10px 0 0;
+      white-space: pre-wrap;
+      font: 16px/1.4 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    }
+    .answer {
+      border-color: var(--green);
+      background: var(--green-soft);
+    }
+    .answer h3, article h3 {
+      margin: 0;
+      font-size: 15px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--green);
+    }
+    .answer p { margin: 10px 0 0; font-size: 20px; }
+    @media (max-width: 860px) {
+      .layout { grid-template-columns: 1fr; }
+      h1 { font-size: 32px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Ask a local model about these Spark jobs</h1>
+    <p class="lead">The model runs on this computer. It calls spark-mcp, the connector in this repo. spark-mcp reads Spark History Server, which is playing the sample jobs in examples/basic.</p>
+    <div class="status" id="status">
+      <span id="st-model">Local model</span>
+      <span id="st-mcp">spark-mcp</span>
+      <span id="st-history">Spark History Server</span>
+    </div>
+    <div class="layout">
+      <section>
+        <h2>Ask</h2>
+        <div class="presets">
+          <button type="button" data-question="What Spark jobs are stored?">What Spark jobs are stored?</button>
+          <button type="button" data-question="Why was the later New York taxi job slower than the earlier one?">Why was the later taxi job slower?</button>
+        </div>
+        <form class="ask" id="form">
+          <textarea id="question" placeholder="Or type your own question"></textarea>
+          <button type="submit" id="send">Ask the local model</button>
+        </form>
+      </section>
+      <section>
+        <h2>What happens</h2>
+        <div id="story">
+          <p class="empty">Pick a question. Each card that appears is one lookup the model asked spark-mcp to make. The green card at the end is the model's own answer.</p>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const story = document.getElementById("story");
+    const send = document.getElementById("send");
+    const questionBox = document.getElementById("question");
+    const buttons = [...document.querySelectorAll("button")];
+
+    function setStatus(id, label, ok) {
+      const node = document.getElementById(id);
+      node.textContent = label;
+      node.className = ok ? "ok" : "bad";
+    }
+
+    async function refreshStatus() {
+      try {
+        const response = await fetch("/api/status");
+        const data = await response.json();
+        setStatus("st-model", data.model_ready ? data.model : data.model + " not running", data.model_ready);
+        setStatus("st-mcp", data.mcp ? "spark-mcp connected" : "spark-mcp not running", data.mcp);
+        setStatus("st-history", data.history ? "Spark History Server connected" : "Spark History Server not running", data.history);
+      } catch (error) {
+        setStatus("st-model", "Demo page cannot check status", false);
+        setStatus("st-mcp", "spark-mcp", false);
+        setStatus("st-history", "Spark History Server", false);
+      }
+    }
+
+    function card(className) {
+      const node = document.createElement("article");
+      if (className) node.className = className;
+      story.append(node);
+      return node;
+    }
+
+    function beginStory(question) {
+      story.replaceChildren();
+      const title = document.createElement("p");
+      title.className = "question";
+      title.textContent = question;
+      story.append(title);
+    }
+
+    function addStatus(text) {
+      let note = story.querySelector(".note");
+      if (!note) {
+        note = document.createElement("p");
+        note.className = "note";
+        story.append(note);
+      }
+      note.textContent = text;
+    }
+
+    function clearStatus() {
+      story.querySelector(".note")?.remove();
+    }
+
+    function addTool(event) {
+      clearStatus();
+      const node = card();
+      const name = document.createElement("div");
+      name.className = "tool-name";
+      name.textContent = event.name;
+      node.append(name);
+      const args = event.arguments || {};
+      const keys = Object.keys(args);
+      if (keys.length) {
+        const line = document.createElement("p");
+        line.className = "args";
+        line.textContent = keys.map((key) => key + " " + args[key]).join("   ");
+        node.append(line);
+      }
+      const body = document.createElement("pre");
+      body.textContent = "Looking it up…";
+      node.append(body);
+      return body;
+    }
+
+    function addAnswer(text, usedTools) {
+      clearStatus();
+      const node = card("answer");
+      const heading = document.createElement("h3");
+      heading.textContent = usedTools === false ? "Answer, without a lookup" : "What the local model said";
+      const paragraph = document.createElement("p");
+      paragraph.textContent = text;
+      node.append(heading, paragraph);
+    }
+
+    async function ask(question) {
+      beginStory(question);
+      addStatus("Sending the question to the local model…");
+      buttons.forEach((button) => { button.disabled = true; });
+      const pending = [];
+      try {
+        const response = await fetch("/api/ask", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ question }),
+        });
+        if (!response.ok) {
+          const data = await response.json();
+          addAnswer(data.error || "The demo could not ask the model.", false);
+          return;
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          buffer += decoder.decode(chunk.value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop();
+          for (const part of parts) {
+            const line = part.split("\n").find((item) => item.startsWith("data: "));
+            if (!line) continue;
+            const event = JSON.parse(line.slice(6));
+            if (event.kind === "status") addStatus(event.text);
+            if (event.kind === "tool_call") pending.push(addTool(event));
+            if (event.kind === "tool_result" && pending.length) {
+              pending.shift().textContent = event.summary;
+            }
+            if (event.kind === "answer") addAnswer(event.text, event.used_tools);
+            if (event.kind === "error") addAnswer(event.text, false);
+          }
+        }
+      } catch (error) {
+        addAnswer(String(error), false);
+      } finally {
+        buttons.forEach((button) => { button.disabled = false; });
+      }
+    }
+
+    document.querySelectorAll("[data-question]").forEach((button) => {
+      button.addEventListener("click", () => ask(button.dataset.question));
+    });
+    document.getElementById("form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const question = questionBox.value.trim();
+      if (question) ask(question);
+    });
+    refreshStatus();
+    setInterval(refreshStatus, 5000);
+  </script>
+</body>
+</html>
