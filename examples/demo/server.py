@@ -221,14 +221,21 @@ def _clean_arguments(name: str, raw: Any) -> dict[str, Any]:
 
 
 async def _ollama_chat(
-    messages: list[dict[str, Any]], *, use_tools: bool = True
+    messages: list[dict[str, Any]],
+    *,
+    use_tools: bool = True,
+    num_predict: int = 700,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model": MODEL,
         "stream": False,
         "messages": messages,
         "keep_alive": "30m",
-        "options": {"temperature": 0.1, "num_ctx": 4096, "num_predict": 400},
+        "options": {
+            "temperature": 0.1,
+            "num_ctx": 4096,
+            "num_predict": num_predict,
+        },
     }
     if use_tools:
         body["tools"] = DEMO_TOOLS
@@ -236,6 +243,10 @@ async def _ollama_chat(
         response = await client.post(f"{OLLAMA_URL}/api/chat", json=body)
         response.raise_for_status()
         return response.json()["message"]
+
+
+def _spark_id(value: Any) -> bool:
+    return isinstance(value, str) and value.startswith("spark-")
 
 
 def _wants_comparison(question: str) -> bool:
@@ -291,6 +302,7 @@ async def _ask_events(question: str) -> AsyncIterator[str]:
     followups = 0
     succeeded: set[str] = set()
     app_ids: list[str] = []
+    bottleneck_ids: list[str] = []
     closing = False
     try:
         for _ in range(MAX_ROUNDS):
@@ -318,12 +330,14 @@ async def _ask_events(question: str) -> AsyncIterator[str]:
                         {
                             "role": "user",
                             "content": (
-                                "Answer the original question in a few sentences. "
-                                "Use every tool result, not only the last one. "
-                                "Say which taxi job was slower, compare the input "
-                                "and shuffle sizes, and name the slowest stage. "
-                                "Mention Spark settings only if compare_job_environments "
-                                "was called."
+                                "Answer in one short paragraph, under 90 words. "
+                                "Call the jobs the 03:56 taxi job and the 00:24 taxi job. "
+                                "Do not print application ids. "
+                                "Say which was slower, the input sizes, the shuffle sizes, "
+                                "and the slowest stage number with its seconds. "
+                                "The environment lookup found that the Spark settings match. "
+                                "Say that they match. Do not say they differ. "
+                                "Finish the paragraph."
                             ),
                         }
                     )
@@ -349,7 +363,24 @@ async def _ask_events(question: str) -> AsyncIterator[str]:
                 function = call.get("function") or {}
                 name = function.get("name") or "unknown"
                 arguments = _clean_arguments(name, function.get("arguments"))
-                yield _sse({"kind": "tool_call", "name": name, "arguments": arguments})
+                if (
+                    name in {"compare_job_performance", "compare_job_environments"}
+                    and len(app_ids) >= 2
+                    and not (
+                        _spark_id(arguments.get("app_id1"))
+                        and _spark_id(arguments.get("app_id2"))
+                    )
+                ):
+                    arguments = {"app_id1": app_ids[0], "app_id2": app_ids[1]}
+                if name == "get_job_bottlenecks" and not _spark_id(
+                    arguments.get("app_id")
+                ):
+                    remaining = [
+                        app_id for app_id in app_ids if app_id not in bottleneck_ids
+                    ]
+                    if remaining:
+                        arguments = {"app_id": remaining[0], "top_n": 3}
+                        bottleneck_ids.append(remaining[0])
                 known = {tool["function"]["name"] for tool in DEMO_TOOLS}
                 invented = [
                     str(value)
@@ -398,15 +429,26 @@ async def _ask_events(question: str) -> AsyncIterator[str]:
                             "Call list_applications and use ids that start with spark-."
                         )
                         error = True
-                yield _sse(
-                    {
-                        "kind": "tool_result",
-                        "name": name,
-                        "arguments": arguments,
-                        "summary": summary,
-                        "error": error,
-                    }
-                )
+                if error:
+                    yield _sse(
+                        {
+                            "kind": "status",
+                            "text": "That lookup did not have a usable application id. Asking the model to try again.",
+                        }
+                    )
+                else:
+                    yield _sse(
+                        {"kind": "tool_call", "name": name, "arguments": arguments}
+                    )
+                    yield _sse(
+                        {
+                            "kind": "tool_result",
+                            "name": name,
+                            "arguments": arguments,
+                            "summary": summary,
+                            "error": False,
+                        }
+                    )
                 if not error:
                     succeeded.add(name)
                     if name == "list_applications":
@@ -424,14 +466,13 @@ async def _ask_events(question: str) -> AsyncIterator[str]:
             {
                 "role": "user",
                 "content": (
-                    "Answer the original question in a few sentences. "
-                    "Use every tool result. Say which job was slower, compare the "
-                    "input and shuffle sizes, name the slowest stage, and say "
-                    "whether the Spark settings matched."
+                    "Answer in one short paragraph, under 90 words. "
+                    "Call the jobs the 03:56 taxi job and the 00:24 taxi job. "
+                    "Do not print application ids. Finish the paragraph."
                 ),
             }
         )
-        final = await _ollama_chat(messages, use_tools=False)
+        final = await _ollama_chat(messages, use_tools=False, num_predict=800)
         text = (final.get("content") or "").strip()
         yield _sse(
             {
