@@ -273,6 +273,7 @@ graph TB
 | **LangGraph** | streamable-http | [Setup →](examples/integrations/langgraph/) |
 | **Strands Agents** | streamable-http | [Setup →](examples/integrations/strands-agents/) |
 | **Local / Inspector** | streamable-http | [Setup →](TESTING.md) |
+| **Presentation demo** | local model + browser | [Demo →](examples/demo/) |
 
 ### Available Tools (19)
 
